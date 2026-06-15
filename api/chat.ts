@@ -45,7 +45,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
 ## 选择题格式（输出 type: choice）
 
-{"type":"choice","round":1,"context_summary":"不超过80字摘要","options":[{"id":"A","text":"选项A","reason":"原因"},{"id":"B","text":"选项B","reason":"原因"},{"id":"C","text":"选项C","reason":"原因"},{"id":"D","text":"选项D","reason":"原因"},{"id":"E","text":"","reason":"请在此输入你的具体需求"}]}
+"context_summary" 是直接展示给用户看的，必须用亲切口语的语气写，像这样：
+- "好哒~你想写关于哪方面的内容呢？"
+- "明白了！那具体是什么产品呢？"
+- "收到～最后再确认一下风格偏好就OK啦！"
+
+JSON格式如下：
+{"type":"choice","round":1,"context_summary":"好哒～你想写关于哪方面的小红书内容呢？","options":[{"id":"A","text":"选项A","reason":"原因"},{"id":"B","text":"选项B","reason":"原因"},{"id":"C","text":"选项C","reason":"原因"},{"id":"D","text":"选项D","reason":"原因"},{"id":"E","text":"","reason":"请在此输入你的具体需求"}]}
 
 ## 最终输出格式（type: final）
 
