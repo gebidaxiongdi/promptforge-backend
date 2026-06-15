@@ -11,10 +11,20 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   const { messages } = req.body;
   if (!messages || !Array.isArray(messages)) { return res.status(400).json({ error: '缺少 messages' }); }
 
-  // 统计轮次
-  let userCount = 0;
-  for (let m of messages) { if (m.role === 'user') userCount++; }
-  let isLastRound = userCount >= 5;
+  // 从APP发送的摘要消息中提取实际轮次
+  let roundCount = 0;
+  for (let m of messages) {
+    if (m.role === 'user') { 
+      roundCount++;
+    }
+    if (m.role === 'system' && typeof m.content === 'string') {
+      let match = m.content.match(/第(\d+)轮/);
+      if (match) {
+        roundCount = parseInt(match[1]) - 1; // 减1因为当前轮还没算
+      }
+    }
+  }
+  let isLastRound = roundCount >= 5;
 
   let aiMessages: Object[] = [
     {
