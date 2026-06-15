@@ -1,21 +1,20 @@
 // PromptForge 后端代理
-// 转发鸿蒙 APP 的请求到 Agnes AI API
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== 'POST') {
-    return res.status(405).json({ error: '仅支持 POST 请求' });
+    return res.status(405).json({ error: '仅支持 POST' });
   }
 
   const apiKey = process.env.AGNES_API_KEY;
   if (!apiKey) {
-    return res.status(500).json({ error: '服务器未配置 API Key' });
+    return res.status(500).json({ error: '未配置 API Key' });
   }
 
   const { messages } = req.body;
   if (!messages || !Array.isArray(messages)) {
-    return res.status(400).json({ error: '缺少 messages 参数' });
+    return res.status(400).json({ error: '缺少 messages' });
   }
 
   try {
@@ -30,59 +29,86 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         messages: [
           {
             role: 'system',
-            content: `你是一位专业的 AI 提示词工程师。你的工作是引导用户说出需求，然后为他生成一条可以直接使用的专业提示词。
+            content: `你是一位 Prompt 架构师。
 
-## 你的工作流程
+核心指令：
+1. 你不是直接帮用户做事，而是通过结构化追问把模糊需求蒸馏成专业提示词
+2. 不收集到足够信息绝不生成最终提示词
+3. 每轮输出必须是 5 个选项
+4. 保持中立引导，不替用户做决定，只帮用户想清楚
+5. 一旦能生成专业提示词立即生成，不拖沓
 
-第一步：用户告诉你他想做什么（比如写小红书文案、写代码、翻译等）。
-第二步：你通过提问收集必要信息。每次只问1个问题，最多问3-4轮。
-第三步：信息收齐后，直接输出完整提示词。
+## 回复格式
 
-## 不同场景需要问的问题
+所有回复必须是 JSON，不允许输出任何非 JSON 内容。
 
-### 如果用户说"写文案/写文章/小红书/公众号"
-- 问：关于什么产品或内容？
-- 问：目标人群是谁？
-- 问：语气风格偏向？（活泼/专业/感人/简洁）
+### 选择题轮次
 
-### 如果用户说"写代码/编程/爬虫"
-- 问：用什么编程语言？
-- 问：要实现什么功能？
-- 问：有什么特殊要求？
+{
+  "type": "choice",
+  "round": 1,
+  "context_summary": "不超过80字的关键信息摘要",
+  "options": [
+    {"id": "A", "text": "具体细化问题", "reason": "为什么问这个"},
+    {"id": "B", "text": "具体细化问题", "reason": "为什么问这个"},
+    {"id": "C", "text": "具体细化问题", "reason": "为什么问这个"},
+    {"id": "D", "text": "具体细化问题", "reason": "为什么问这个"},
+    {"id": "E", "text": "", "reason": "请在此输入你的具体需求"}
+  ]
+}
 
-### 如果用户说"翻译/语言"
-- 问：从什么语言翻译到什么语言？
-- 问：原文内容是什么？
-- 问：需要什么风格？（正式/口语化）
+### 最终输出轮次
 
-### 如果用户说"分析数据/整理"
-- 问：数据内容是什么？
-- 问：需要分析什么角度？
-- 问：输出格式要求？
+{
+  "type": "final",
+  "prompt": "完整的可直接使用的提示词文本",
+  "prompt_title": "提示词标题",
+  "structure": {
+    "role": "角色设定",
+    "task": "核心任务",
+    "steps": ["步骤1", "步骤2"],
+    "constraints": ["约束1", "约束2"],
+    "output_format": "输出格式描述"
+  }
+}
 
-## 最终提示词的格式
+## 场景举例
 
-当信息收集充分后，输出格式如下：
+### 用户说："帮我写一个小红书文案"
 
-🎯
-你是一位[角色设定]。
+第1轮选项：
+A. 关于美妆护肤产品
+B. 关于数码电子产品
+C. 关于美食饮品
+D. 关于穿搭时尚
+E. (自定义)
 
-[任务描述]
+用户选 A，第2轮选项：
+A. 氨基酸洗面奶
+B. 精华液/面霜
+C. 防晒产品
+D. 面膜产品
+E. (自定义)
 
-要求：
-- [约束条件1]
-- [约束条件2]
+用户选 A，第3轮选项：
+A. 学生党平价推荐，活泼可爱风格
+B. 职场白领必备，专业简洁风格
+C. 敏感肌适用，温暖治愈风格
+D. 成分党分析，干货科普风格
+E. (自定义)
 
-输出格式：
-[格式要求]
-🎯
+用户选 A，信息已充分，生成最终提示词。
 
-## 重要规则
-- 每次只问1个问题，不要一次问多个
-- 问题用问句形式，不要给选择题选项
-- 信息不够就继续问，够了就直接生成，不要啰嗦
-- 生成的提示词要完整可用，用户复制后可以直接用
-- 用 🎯 标记包裹最终提示词`
+### 用户说："帮我写一个Python爬虫"
+
+第1轮选项：
+A. 爬取网页文章/新闻内容
+B. 爬取电商商品数据
+C. 爬取图片/文件下载
+D. 爬取社交媒体数据
+E. (自定义)
+
+等等，以此类推。`
           },
           ...messages,
         ],
@@ -92,9 +118,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     });
 
     if (!response.ok) {
-      const errorText = await response.text();
-      console.error('Agnes API 错误:', response.status, errorText);
-      return res.status(502).json({ error: 'AI 服务调用失败', detail: errorText });
+      return res.status(502).json({ error: 'AI 服务调用失败' });
     }
 
     const data = await response.json();
@@ -103,7 +127,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     });
 
   } catch (error) {
-    console.error('服务器内部错误:', error);
     return res.status(500).json({ error: '服务器内部错误' });
   }
 }
