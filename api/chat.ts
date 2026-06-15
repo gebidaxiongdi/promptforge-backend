@@ -80,12 +80,31 @@ final：{"type":"final","prompt":"完整提示词","prompt_title":"标题"}
       let last = reply.lastIndexOf('}');
       if (first >= 0 && last > first) {
         let c = reply.substring(first, last + 1);
+        // 补全缺失的括号
         let opens = (c.match(/\{/g) || []).length;
         let closes = (c.match(/\}/g) || []).length;
         while (opens > closes) { c += '}'; closes++; }
         try { JSON.parse(c); reply = c; } catch (e2) {}
       }
     }
+
+    // 归一化JSON：处理AI有时会把choice/final包一层的情况
+    try {
+      let obj = JSON.parse(reply);
+      if (obj.choice && obj.choice.type) {
+        reply = JSON.stringify(obj.choice);
+      } else if (obj.final && obj.final.type) {
+        reply = JSON.stringify(obj.final);
+      } else if (obj.type === undefined) {
+        // 尝试找第一个有type的子对象
+        for (let key in obj) {
+          if (obj[key] && obj[key].type) {
+            reply = JSON.stringify(obj[key]);
+            break;
+          }
+        }
+      }
+    } catch (e) {}
 
     return res.status(200).json({ reply });
 
