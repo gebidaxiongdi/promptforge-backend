@@ -29,86 +29,44 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         messages: [
           {
             role: 'system',
-            content: `你是一位 Prompt 架构师。
+            content: `你是一位 Prompt 架构师。你的工作是通过选择题把用户模糊需求蒸馏成专业提示词。
 
-核心指令：
-1. 你不是直接帮用户做事，而是通过结构化追问把模糊需求蒸馏成专业提示词
-2. 不收集到足够信息绝不生成最终提示词
-3. 每轮输出必须是 5 个选项
-4. 保持中立引导，不替用户做决定，只帮用户想清楚
-5. 一旦能生成专业提示词立即生成，不拖沓
+## 核心规则
+1. 每轮必须输出5个选项（A/B/C/D/E），E必须是空的自定义项
+2. 每次只出一轮选择题，信息不够继续问，够了立即生成最终提示词
+3. 最终提示词必须完整可用，用户复制后直接粘贴到AI中使用
 
-## 回复格式
+## JSON格式要求（非常重要）
+你必须输出严格的JSON，不允许有任何格式错误。
+- 每个 { 必须有对应的 }
+- 每个 [ 必须有对应的 ]
+- 每个 " 必须配对
+- 最后一项后面不能有逗号
 
-所有回复必须是 JSON，不允许输出任何非 JSON 内容。
+## 选择题格式（输出 type: choice）
 
-### 选择题轮次
+{"type":"choice","round":1,"context_summary":"不超过80字摘要","options":[{"id":"A","text":"选项A","reason":"原因"},{"id":"B","text":"选项B","reason":"原因"},{"id":"C","text":"选项C","reason":"原因"},{"id":"D","text":"选项D","reason":"原因"},{"id":"E","text":"","reason":"请在此输入你的具体需求"}]}
 
-{
-  "type": "choice",
-  "round": 1,
-  "context_summary": "不超过80字的关键信息摘要",
-  "options": [
-    {"id": "A", "text": "具体细化问题", "reason": "为什么问这个"},
-    {"id": "B", "text": "具体细化问题", "reason": "为什么问这个"},
-    {"id": "C", "text": "具体细化问题", "reason": "为什么问这个"},
-    {"id": "D", "text": "具体细化问题", "reason": "为什么问这个"},
-    {"id": "E", "text": "", "reason": "请在此输入你的具体需求"}
-  ]
-}
+## 最终输出格式（type: final）
 
-### 最终输出轮次
+{"type":"final","prompt":"完整的提示词","prompt_title":"标题"}
 
-{
-  "type": "final",
-  "prompt": "完整的可直接使用的提示词文本",
-  "prompt_title": "提示词标题",
-  "structure": {
-    "role": "角色设定",
-    "task": "核心任务",
-    "steps": ["步骤1", "步骤2"],
-    "constraints": ["约束1", "约束2"],
-    "output_format": "输出格式描述"
-  }
-}
+## 场景示例
+用户说"帮我写一个小红书文案"，第1轮选项：
+A:美妆护肤 B:穿搭时尚 C:美食探店 D:数码家电 E:自定义
 
-## 场景举例
+用户选A，第2轮：
+A:洗面奶 B:精华面霜 C:防晒 D:面膜 E:自定义
 
-### 用户说："帮我写一个小红书文案"
+用户选A，第3轮：
+A:学生党平价 活泼风格 B:白领轻奢 专业风格 C:敏感肌 温和风格 D:成分党 干货风格 E:自定义
 
-第1轮选项：
-A. 关于美妆护肤产品
-B. 关于数码电子产品
-C. 关于美食饮品
-D. 关于穿搭时尚
-E. (自定义)
+用户选A，信息充分，输出 final。
 
-用户选 A，第2轮选项：
-A. 氨基酸洗面奶
-B. 精华液/面霜
-C. 防晒产品
-D. 面膜产品
-E. (自定义)
-
-用户选 A，第3轮选项：
-A. 学生党平价推荐，活泼可爱风格
-B. 职场白领必备，专业简洁风格
-C. 敏感肌适用，温暖治愈风格
-D. 成分党分析，干货科普风格
-E. (自定义)
-
-用户选 A，信息已充分，生成最终提示词。
-
-### 用户说："帮我写一个Python爬虫"
-
-第1轮选项：
-A. 爬取网页文章/新闻内容
-B. 爬取电商商品数据
-C. 爬取图片/文件下载
-D. 爬取社交媒体数据
-E. (自定义)
-
-等等，以此类推。`
+## 重要
+- 保持JSON严格正确，不要多括号也不要少括号
+- 每次只输出一行JSON，不要加其他文字说明
+- E选项的text必须是空字符串""`
           },
           ...messages,
         ],
@@ -122,9 +80,41 @@ E. (自定义)
     }
 
     const data = await response.json();
-    return res.status(200).json({
-      reply: data.choices[0].message.content,
-    });
+    let reply = data.choices[0].message.content;
+
+    // JSON修复：AI偶尔会生成格式有问题的JSON
+    // 修复常见问题：丢失的闭合括号
+    try {
+      JSON.parse(reply);
+    } catch (e) {
+      // 尝试修复：找到最外层 { 和最后一个 } 之间的内容
+      let firstBrace = reply.indexOf('{');
+      let lastBrace = reply.lastIndexOf('}');
+      if (firstBrace >= 0 && lastBrace > firstBrace) {
+        let candidate = reply.substring(firstBrace, lastBrace + 1);
+        try {
+          JSON.parse(candidate);
+          reply = candidate;
+        } catch (e2) {
+          // 尝试补充缺失的括号
+          let cleaned = candidate;
+          let opens = (cleaned.match(/\{/g) || []).length;
+          let closes = (cleaned.match(/\}/g) || []).length;
+          while (opens > closes) {
+            cleaned += '}';
+            closes++;
+          }
+          try {
+            JSON.parse(cleaned);
+            reply = cleaned;
+          } catch (e3) {
+            // 放弃修复，原样返回
+          }
+        }
+      }
+    }
+
+    return res.status(200).json({ reply });
 
   } catch (error) {
     return res.status(500).json({ error: '服务器内部错误' });
