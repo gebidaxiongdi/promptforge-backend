@@ -1,0 +1,12 @@
+{
+  "name": "promptforge-backend",
+  "version": "1.0.0",
+  "private": true,
+  "description": "PromptForge 提示词工坊 - Vercel 后端代理",
+  "scripts": {
+    "dev": "vercel dev"
+  },
+  "dependencies": {
+    "@vercel/node": "^3.0.0"
+  }
+}
