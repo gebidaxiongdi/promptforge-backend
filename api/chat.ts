@@ -1,4 +1,4 @@
-// PromptForge 后端代理
+// PromptForge 后端代理 - v2 统一响应格式
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 
@@ -11,13 +11,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   const { messages } = req.body;
   if (!messages || !Array.isArray(messages)) { return res.status(400).json({ error: '缺少 messages' }); }
 
-  // 计算当前是第几轮（统计 user 消息数）
+  // 统计轮次
   let userCount = 0;
-  for (let m of messages) {
-    if (m.role === 'user') { userCount++; }
-  }
-  let roundNum = userCount;
-  let isLastRound = roundNum >= 5;
+  for (let m of messages) { if (m.role === 'user') userCount++; }
+  let isLastRound = userCount >= 5;
 
   let aiMessages: Object[] = [
     {
@@ -31,27 +28,18 @@ choice：{"type":"choice","round":1,"context_summary":"口语化提问","options
 final：{"type":"final","prompt":"完整提示词","prompt_title":"标题"}
 
 ## 核心规则
-1. 最多5轮，第5轮用户回复后必须直接出final，不准再出choice
-2. 每轮的选项必须基于用户上一轮的选择"往深挖"。比如用户选了"美妆护肤"，下次就该问"洗面奶/精华/防晒/面膜"，而不是又问大类
-3. context_summary要体现上轮关键信息，比如"收到！你要写美妆类的洗面奶文案~"
-4. 第5轮必须出final，信息不够也要基于已收集的信息生成最佳提示词
-5. E的text固定为""`
+1. 最多5轮，第5轮用户回复后必须直接出final
+2. 每轮选项必须基于用户上轮选择往深挖
+3. E的text固定为""，每次只输出一行JSON`
     }
   ];
 
-  // 如果是最后一轮，在用户消息前插一条强制final指令
   for (let i = 0; i < messages.length; i++) {
     if (i === messages.length - 1 && messages[i].role === 'user') {
       if (isLastRound) {
-        aiMessages.push({
-          role: 'system',
-          content: '这是第5轮了，用户的最后一次选择已给出。现在必须输出final类型，不要再出choice。根据已收集的所有信息，生成一条完整的专业提示词。'
-        });
+        aiMessages.push({ role: 'system', content: '已到第5轮，必须输出final类型，不要再出choice。' });
       } else {
-        aiMessages.push({
-          role: 'system',
-          content: '输出choice格式。选项必须基于用户上轮回复往深挖细化。如果信息已足够可直接出final。只输出JSON。'
-        });
+        aiMessages.push({ role: 'system', content: '输出choice格式，每项基于上轮往深挖。只输出JSON。' });
       }
     }
     aiMessages.push(messages[i]);
@@ -61,54 +49,77 @@ final：{"type":"final","prompt":"完整提示词","prompt_title":"标题"}
     const response = await fetch('https://apihub.agnes-ai.com/v1/chat/completions', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
-      body: JSON.stringify({
-        model: 'agnes-2.0-flash',
-        messages: aiMessages,
-        temperature: 0.7,
-        max_tokens: 2000,
-      }),
+      body: JSON.stringify({ model: 'agnes-2.0-flash', messages: aiMessages, temperature: 0.7, max_tokens: 2000 }),
     });
 
-    if (!response.ok) { return res.status(502).json({ error: 'AI 服务调用失败' }); }
-
-    const data = await response.json();
-    let reply = data.choices[0].message.content;
-
-    // JSON修复
-    try { JSON.parse(reply); } catch (e) {
-      let first = reply.indexOf('{');
-      let last = reply.lastIndexOf('}');
-      if (first >= 0 && last > first) {
-        let c = reply.substring(first, last + 1);
-        // 补全缺失的括号
-        let opens = (c.match(/\{/g) || []).length;
-        let closes = (c.match(/\}/g) || []).length;
-        while (opens > closes) { c += '}'; closes++; }
-        try { JSON.parse(c); reply = c; } catch (e2) {}
-      }
+    if (!response.ok) {
+      return res.status(200).json({ replyType: 'text', text: 'AI服务暂时不可用，请稍后重试' });
     }
 
-    // 归一化JSON：处理AI有时会把choice/final包一层的情况
-    try {
-      let obj = JSON.parse(reply);
-      if (obj.choice && obj.choice.type) {
-        reply = JSON.stringify(obj.choice);
-      } else if (obj.final && obj.final.type) {
-        reply = JSON.stringify(obj.final);
-      } else if (obj.type === undefined) {
-        // 尝试找第一个有type的子对象
-        for (let key in obj) {
-          if (obj[key] && obj[key].type) {
-            reply = JSON.stringify(obj[key]);
-            break;
-          }
-        }
-      }
-    } catch (e) {}
+    const data = await response.json();
+    let rawReply = data.choices[0].message.content || '';
 
-    return res.status(200).json({ reply });
+    // ----- 后端统一解析AI的JSON，返回简单结构给APP -----
+    // 尝试从rawReply中提取最外层完整的JSON对象
+    let jsonStr = '';
+    let firstBrace = rawReply.indexOf('{');
+    let lastBrace = rawReply.lastIndexOf('}');
+    if (firstBrace >= 0 && lastBrace > firstBrace) {
+      jsonStr = rawReply.substring(firstBrace, lastBrace + 1);
+    }
+
+    if (!jsonStr) {
+      return res.status(200).json({ replyType: 'text', text: rawReply.substring(0, 200) });
+    }
+
+    // JSON修复：补全缺失括号
+    let opens = (jsonStr.match(/\{/g) || []).length;
+    let closes = (jsonStr.match(/\}/g) || []).length;
+    while (opens > closes) { jsonStr += '}'; closes++; }
+
+    let parsed: any;
+    try { parsed = JSON.parse(jsonStr); } catch (e) {
+      return res.status(200).json({ replyType: 'text', text: rawReply.substring(0, 200) });
+    }
+
+    // 处理嵌套格式 {choice: {...}} 或 {final: {...}}
+    let inner = parsed;
+    if (parsed.choice && typeof parsed.choice === 'object') inner = parsed.choice;
+    if (parsed.final && typeof parsed.final === 'object') inner = parsed.final;
+
+    if (inner.type === 'choice' && Array.isArray(inner.options)) {
+      // 返回清洗后的选项数据
+      let cleanedOptions = inner.options.map((o: any) => ({
+        id: o.id || '',
+        text: o.text || '',
+        reason: o.reason || ''
+      }));
+      // 确保有5个选项，E的text为空
+      while (cleanedOptions.length < 5) {
+        cleanedOptions.push({ id: String.fromCharCode(65 + cleanedOptions.length), text: '', reason: '' });
+      }
+      if (cleanedOptions.length >= 5) {
+        cleanedOptions[4] = { id: 'E', text: '', reason: '请在此输入你的具体需求' };
+      }
+
+      return res.status(200).json({
+        replyType: 'choice',
+        summary: inner.context_summary || '请选择：',
+        options: cleanedOptions
+      });
+
+    } else if (inner.type === 'final') {
+      return res.status(200).json({
+        replyType: 'final',
+        title: inner.prompt_title || 'AI提示词',
+        prompt: inner.prompt || ''
+      });
+    }
+
+    // 无法识别，返回文本
+    return res.status(200).json({ replyType: 'text', text: rawReply.substring(0, 200) });
 
   } catch (error) {
-    return res.status(500).json({ error: '服务器内部错误' });
+    return res.status(200).json({ replyType: 'text', text: '服务器内部错误' });
   }
 }
